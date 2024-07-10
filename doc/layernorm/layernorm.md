@@ -1,9 +1,8 @@
+# LayerNorm
 
-# layernorm
+간단한 튜토리얼. 모델의 한 예로 LayerNorm이 어떻게 처리되는지 살펴보겠습니다. 먼저 [PyTorch LayerNorm 문서](https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html)를 확인합니다. LayerNorm은 [Ba et al. 2016](https://arxiv.org/abs/1607.06450)의 원본 논문에서 유래되었으며, [Vaswani et al.](https://arxiv.org/abs/1706.03762)의 유명한 논문 Attention is All You Need에서 Transformer에 통합되었습니다. [GPT-2](https://d4mucfpksywv.cloudfront.net/better-language-models/language_models_are_unsupervised_multitask_learners.pdf)는 Transformer와 동일한 아키텍처를 채택했지만, LayerNorm의 위치가 사전 정규화(pre-normalization) 버전으로 이동했습니다. 즉, Transformer의 잔여 경로(residual path)는 깨끗하게 유지되고, LayerNorm은 이제 Transformer의 각 블록의 첫 번째 레이어가 되었습니다. 이는 훈련 안정성을 긍정적으로 향상시킵니다.
 
-Quick tutorial. Let's look at how LayerNorm is handled, as one example layer in the model. We start with the [PyTorch docs for LayerNorm](https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html). LayerNorm of course comes from this original paper by [Ba et al. 2016](https://arxiv.org/abs/1607.06450), and was incorporated into the Transformer in [Vaswani et al.](https://arxiv.org/abs/1706.03762) famous paper Attention is All You Need. [GPT-2](https://d4mucfpksywv.cloudfront.net/better-language-models/language_models_are_unsupervised_multitask_learners.pdf) picked up the same architecture as the Transformer, but the position of the LayerNorm was famously moved into what is now called the pre-normalization version. That is, the residual path of the Transformer is kept clean, and the LayerNorms are now the first layer of each block of the Transformer. This positively improves training stability.
-
-The first thing to note when looking at [PyTorch LayerNorm](https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html) is that you will most likely not be able to find the actual implementation of the equation. That's because it is buried 30 layers deep in the code, behind an inscrutable dynamical dispatcher, in some possibly auto-generated CUDA code (for those who are interested in details, see [layer_norm.cpp](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/layer_norm.cpp) and  [layer_norm_kernel.cu](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cuda/layer_norm_kernel.cu)). This is done because PyTorch really really cares about efficiency, fair enough. For our purposes though, we have to start by first implementing LayerNorm manually using simpler PyTorch operations. This will be a lot less efficient than just forwarding a `LayerNorm` module, but it is algorithmically instructive. So here is the direct implementation of the math of LayerNorm using simpler PyTorch operations:
+[PyTorch LayerNorm](https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html)을 볼 때 첫 번째로 주목할 점은 실제로 방정식의 구현을 찾기 어려울 것이라는 점입니다. 이는 코드의 30단계 깊이에 숨겨져 있으며, 난해한 동적 디스패처 뒤에 있으며, 일부 자동 생성된 CUDA 코드에 있을 수 있습니다(자세한 내용은 [layer_norm.cpp](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/layer_norm.cpp) 및 [layer_norm_kernel.cu](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cuda/layer_norm_kernel.cu)를 참조하십시오). 이는 PyTorch가 효율성을 매우 중요하게 생각하기 때문에 이루어집니다. 하지만 우리의 목적을 위해서는 먼저 더 간단한 PyTorch 연산을 사용하여 LayerNorm을 수동으로 구현해야 합니다. 이는 `LayerNorm` 모듈을 전달하는 것보다 훨씬 비효율적이지만 알고리즘적으로 유익합니다. 따라서 더 간단한 PyTorch 연산을 사용하여 LayerNorm의 수학적 구현은 다음과 같습니다:
 
 ```python
 import torch
@@ -13,33 +12,33 @@ class LayerNorm:
 
     @staticmethod
     def forward(x, w, b):
-        # x is the input activations, of shape B,T,C
-        # w are the weights, of shape C
-        # b are the biases, of shape C
+        # x는 입력 활성화, 형태는 B,T,C
+        # w는 가중치, 형태는 C
+        # b는 바이어스, 형태는 C
         B, T, C = x.size()
-        # calculate the mean
+        # 평균 계산
         mean = x.sum(-1, keepdim=True) / C # B,T,1
-        # calculate the variance
+        # 분산 계산
         xshift = x - mean # B,T,C
         var = (xshift**2).sum(-1, keepdim=True) / C # B,T,1
-        # calculate the inverse standard deviation: **0.5 is sqrt, **-0.5 is 1/sqrt
+        # 역표준편차 계산: **0.5는 sqrt, **-0.5는 1/sqrt
         rstd = (var + eps) ** -0.5 # B,T,1
-        # normalize the input activations
+        # 입력 활성화 정규화
         norm = xshift * rstd # B,T,C
-        # scale and shift the normalized activations at the end
+        # 정규화된 활성화를 스케일링하고 이동
         out = norm * w + b # B,T,C
 
-        # return the output and the cache, of variables needed later during the backward pass
+        # 출력과 나중에 역전파에서 필요한 변수 캐시 반환
         cache = (x, w, mean, rstd)
         return out, cache
 ```
 
-The activation tensors in the residual path of the Transformer during training are 3-dimensional arrays (tensors), of shape `B,T,C`. B is the batch size, T is time, and C is channels. For example, B=8, T=1024, C=768 is one setting you might see, for the smallest (124 million parameter) GPT-2 model.
+Transformer의 잔여 경로의 활성화 텐서는 훈련 중에 `B,T,C` 형태의 3차원 배열(텐서)입니다. 여기서 B는 배치 크기, T는 시간, C는 채널입니다. 예를 들어, B=8, T=1024, C=768은 가장 작은 GPT-2 모델(1억 2400만 매개변수)에서 볼 수 있는 설정 중 하나입니다.
 
-We can forward this layer with some random numbers:
+이 레이어를 임의의 숫자로 전달할 수 있습니다:
 
 ```python
-B = 2 # some toy numbers here
+B = 2 # 일부 장난감 숫자
 T = 3
 C = 4
 x = torch.randn(B, T, C, requires_grad=True)
@@ -48,9 +47,9 @@ b = torch.randn(C, requires_grad=True)
 out, cache = LayerNorm.forward(x, w, b)
 ```
 
-What we get out is the tensor `out`, also of shape `B,T,C`, where each C-dimensional "fibre" of activations (as we call them) is normalized and then scaled and at the end also shifted by the weights and biases of this layer. Notice that, importantly, we also return a variable `cache`, which is a tuple of the input activations `x`, the weights `w`, the mean `mean`, and the reciprocal standard deviation `rstd`. These are all variables we need during the backward pass.
+우리가 얻는 출력은 `B,T,C` 형태의 텐서 `out`이며, 각 C차원 "섬유" 활성화는 정규화되고, 마지막에 이 레이어의 가중치와 바이어스로 스케일링되고 이동됩니다. 중요한 점은 `cache`라는 변수를 반환한다는 것입니다. 이는 입력 활성화 `x`, 가중치 `w`, 평균 `mean`, 역표준편차 `rstd`의 튜플입니다. 이는 역전파 동안 필요한 모든 변수입니다.
 
-PyTorch can of course do the backward pass of this layer for us with its Autograd. Let's do that first:
+PyTorch는 Autograd를 사용하여 이 레이어의 역전파를 수행할 수 있습니다. 먼저 이를 수행해 보겠습니다:
 
 ```python
 dout = torch.randn(B, T, C)
@@ -58,31 +57,31 @@ fakeloss = (out * dout).sum()
 fakeloss.backward()
 ```
 
-You see here that we created a `fakeloss`, which simply takes a (random) weighted combination of all the outputs of our layernorm. All this is doing is projecting all of the `B,T,C` numbers into a single scalar value (loss), so that we have a single output of our "computational graph". Typically this would be the loss of the model, but here we're just doing a fake loss. We then call `backward()` on this scalar, and PyTorch will compute all the gradients for us on all the inputs to this graph - i.e. the input activations `x`, the weights `w`, and the biases `b`. If you don't know too much about autograd, I'd encourage you to watch my [micrograd](https://www.youtube.com/watch?v=VMj-3S1tku0) video, where we build a tiny autograd engine. So the magic of PyTorch autograd is that after we call `.backward`, it will populate the `.grad` attribute of all the tensors that have `requires_grad=True` with the gradients of the loss with respect to that tensor. These gradients are telling us the slope of the loss for all of the input numbers in x,w,b. Therefore, the shape of `x.grad`, `w.grad`, and `b.grad` are exactly the same as the shape of `x`, `w`, and `b`.
+여기서 우리는 `fakeloss`를 생성했으며, 이는 단순히 레이어노름의 모든 출력의 (임의의) 가중 조합을 취합니다. 이는 단순히 모든 `B,T,C` 숫자를 단일 스칼라 값(손실)로 투영하는 것입니다. 일반적으로 이는 모델의 손실이지만, 여기서는 단순히 가짜 손실을 수행하고 있습니다. 그런 다음 이 스칼라에 대해 `backward()`를 호출하면 PyTorch는 이 그래프의 모든 입력에 대한 모든 기울기를 계산합니다 - 즉, 입력 활성화 `x`, 가중치 `w`, 바이어스 `b`입니다. Autograd에 대해 잘 모른다면, 제 [micrograd](https://www.youtube.com/watch?v=VMj-3S1tku0) 비디오를 시청하는 것이 좋습니다. 여기서 우리는 작은 autograd 엔진을 구축합니다. PyTorch autograd의 마법은 `.backward`를 호출한 후 `requires_grad=True`인 모든 텐서의 `.grad` 속성을 해당 텐서에 대한 손실의 기울기로 채운다는 것입니다. 이 기울기는 x, w, b의 모든 입력 숫자에 대한 손실의 기울기를 알려줍니다. 따라서 `x.grad`, `w.grad`, `b.grad`의 형태는 `x`, `w`, `b`의 형태와 정확히 동일합니다.
 
-But we don't want to use PyTorch Autograd. We want to do the backward pass manually. So we take out pen and paper and write out the expression for LayerNorm. The forward pass has the following mathematical form:
+하지만 우리는 PyTorch Autograd를 사용하고 싶지 않습니다. 우리는 역전파를 수동으로 수행하고 싶습니다. 따라서 우리는 LayerNorm의 표현식을 작성합니다. 순전파는 다음과 같은 수학적 형태를 가집니다:
 
 $\text{LayerNorm}(x) = w \odot \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} + b$
 
-where $\odot$ is elementwise multiplication, $\mu$ is the mean, $\sigma^2$ is the variance, and $\epsilon$ is a small constant to avoid division by zero. Remembering the rules of differentiation from calculus, we now want to derive the gradients. For this part, my video [Becoming a Backprop Ninja](https://www.youtube.com/watch?v=q8SA3rM6ckI) could be very helpful, as I work through (in detail) a similar layer - the Batch Normalization layer. When you work through the differentiation, you'll notice that the expressions simplify analytically and you can move the terms around and simplify the expression somehwat. So you don't have to manually backward every individual line in the forward pass. In particular, we get:
+여기서 $\odot$는 요소별 곱셈, $\mu$는 평균, $\sigma^2$는 분산, $\epsilon$은 0으로 나누는 것을 방지하기 위한 작은 상수입니다. 미적분학의 미분 규칙을 기억하면서, 이제 기울기를 도출하고자 합니다. 이 부분에서는 [Becoming a Backprop Ninja](https://www.youtube.com/watch?v=q8SA3rM6ckI) 비디오가 매우 유용할 수 있습니다. 여기서 유사한 레이어인 배치 정규화 레이어를 자세히 다룹니다. 미분을 통해 표현식을 단순화하고 항을 이동하여 표현식을 약간 단순화할 수 있습니다. 따라서 순전파의 각 개별 라인을 수동으로 역전파할 필요는 없습니다. 특히, 우리는 다음과 같은 결과를 얻습니다:
 
 ```python
     @staticmethod
     def backward(dout, cache):
         x, w, mean, rstd = cache
-        # recompute the norm (save memory at the cost of compute)
+        # norm을 다시 계산 (메모리를 절약하는 대신 계산 비용 증가)
         norm = (x - mean) * rstd
-        # gradients for weights, bias
+        # 가중치, 바이어스에 대한 기울기
         db = dout.sum((0, 1))
         dw = (dout * norm).sum((0, 1))
-        # gradients for input
+        # 입력에 대한 기울기
         dnorm = dout * w
         dx = dnorm - dnorm.mean(-1, keepdim=True) - norm * (dnorm * norm).mean(-1, keepdim=True)
         dx *= rstd
         return dx, dw, db
 ```
 
-So given the gradients on every individual output number stored in `dout`, and the `cache` from the forward pass, we can now backward through this layer into the inputs, to continue the chain rule of the backward pass. So now we can do our own backward pass and see that they match (the errors are tiny):
+따라서 출력 숫자 `dout`에 대한 기울기와 순전파의 `cache`를 사용하여 이 레이어를 통해 입력으로 역전파할 수 있으며, 역전파의 연쇄 규칙을 계속할 수 있습니다. 이제 우리는 우리의 역전파를 수행하고 결과가 일치하는지 확인할 수 있습니다(오차는 매우 작습니다):
 
 ```python
 dx, dw, db = LayerNorm.backward(dout, cache)
@@ -91,9 +90,9 @@ print("dw error:", (w.grad - dw).abs().max().item())
 print("db error:", (b.grad - db).abs().max().item())
 ```
 
-Notice one more thing. Inside the backward pass we recomputed the variable `norm`. We already calculated this variable in the forward pass but then we threw it away! Couldn't we have made this also be a part of the `cache` and save this recompute? Actually, we very well could and you'd of course get the exact same results. The amount of stuff we save into our `cache` is completely up to us. We didn't even have to save `mean` and `rstd` either, and we could have recomputed them in the backward pass. The difference is that `mean` and `rstd` are very small, only of shape `B,T`, where as `norm` is of shape `B,T,C`. So this is simply a tradeoff between memory and compute. By not keeping `norm` in the cache, we are saving memory, but we are trading it off for a bit of compute later in the backward pass. This is very common in all the layers, and you'll see that different implementations of various layers in deep learning frameworks may all have different "checkpointing settings". Yes, confusingly enough, this is called checkpointing and has nothing to do with saving the model weights to disk. It's about saving intermediate variables in the forward pass to save compute in the backward pass.
+한 가지 더 주목할 점은 역전파에서 `norm` 변수를 다시 계산했다는 것입니다. 우리는 이미 순전파에서 이 변수를 계산했지만 버렸습니다! 이를 `cache`의 일부로 만들어 다시 계산하지 않을 수도 있었습니다. 실제로 그렇게 할 수 있으며, 동일한 결과를 얻을 수 있습니다. `cache`에 저장하는 양은 전적으로 우리에게 달려 있습니다. `mean`과 `rstd`도 저장하지 않고 역전파에서 다시 계산할 수 있었습니다. 차이점은 `mean`과 `rstd`는 매우 작으며, 형태는 `B,T`입니다. 반면 `norm`은 `B,T,C` 형태입니다. 따라서 이는 메모리와 계산 간의 단순한 트레이드오프입니다. `norm`을 캐시에 저장하지 않음으로써 메모리를 절약하지만, 나중에 역전파에서 약간의 계산을 교환합니다. 이는 모든 레이어에서 매우 일반적이며, 다양한 딥러닝 프레임워크의 레이어 구현은 모두 다른 "체크포인트 설정"을 가질 수 있습니다. 혼란스럽게도 이는 체크포인트라고 불리며, 모델 가중치를 디스크에 저장하는 것과는 아무런 관련이 없습니다. 이는 순전파에서 중간 변수를 저장하여 역전파에서 계산을 절약하는 것입니다.
 
-Okay so that's the version with PyTorch tensors. Now we have to move this to C and get rid of the Tensor abstraction. Before I give you the full implementation of the forward pass, a brief word on Tensors. What are Tensors? They are 1) a 1D block of memory called Storage that holds the raw data, and 2) a View over that storage that holds its shape. [PyTorch Internals](http://blog.ezyang.com/2019/05/pytorch-internals/) could be helpful here. So for example if we have the 3D tensor:
+이제 PyTorch 텐서를 사용한 버전을 살펴보았습니다. 이제 이를 C로 이동하고 Tensor 추상화를 제거해야 합니다. 순전파의 전체 구현을 제공하기 전에, 텐서에 대한 간단한 설명을 하겠습니다. 텐서란 무엇입니까? 텐서는 1) 원시 데이터를 저장하는 1차원 메모리 블록인 Storage와 2) 해당 저장소에 대한 View로 구성됩니다. [PyTorch Internals](http://blog.ezyang.com/2019/05/pytorch-internals/)가 도움이 될 수 있습니다. 예를 들어, 3차원 텐서가 있다고 가정해 보겠습니다:
 
 ```python
 torch.manual_seed(42)
@@ -110,7 +109,7 @@ tensor([[[ 1.9269,  1.4873,  0.9007, -2.1055],
          [-0.5920, -0.0631, -0.8286,  0.3309]]])
 ```
 
-This is 2x3x4 Tensor, but the underlying memory of it is just one single 1D array of size 2\*3\*4=24. The View is just a shape over this 1D array. So now when we index into this PyTorch tensor, for example `a[1,2,3]`, PyTorch computes the offset into the 1D array as `1*3*4 + 2*4 + 3 = 23`, and return the value at that offset. The general formula is that if you want to retrieve any element `b,t,c`, you compute the offset into Storage as `b*T*C + t*C + c`. So for example:
+이는 2x3x4 텐서이지만, 기본 메모리는 단일 1차원 배열로 크기는 2\*3\*4=24입니다. View는 이 1차원 배열에 대한 형태일 뿐입니다. 이제 PyTorch 텐서에 인덱싱할 때, 예를 들어 `a[1,2,3]`, PyTorch는 1차원 배열의 오프셋을 `1*3*4 + 2*4 + 3 = 23`으로 계산하고 해당 오프셋의 값을 반환합니다. 일반적인 공식은 `b,t,c` 요소를 검색하려면 Storage의 오프셋을 `b*T*C + t*C + c`로 계산하는 것입니다. 예를 들어:
 
 ```python
 b,t,c = 1,2,3
@@ -118,7 +117,7 @@ print(a[b,t,c])
 print(a.view(-1)[b*T*C + t*C + c])
 ```
 
-Both of these print 0.3309. So in this way, we know how to access all the individual elements, and how to offset all the pointers. Notice in particular that the channel dimension is the innermost dimension. So as we increase offset by 1, we are traversing the channel dimension. This is important to consider for the memory layout of our C implementation. The equivalent forward pass in C becomes:
+이 두 가지는 모두 0.3309를 출력합니다. 따라서 이 방식으로 모든 개별 요소에 접근하는 방법과 모든 포인터의 오프셋을 계산하는 방법을 알 수 있습니다. 특히 채널 차원이 가장 안쪽 차원임을 주목하십시오. 따라서 오프셋을 1씩 증가시키면 채널 차원을 순회하게 됩니다. 이는 C 구현의 메모리 레이아웃을 고려할 때 중요합니다. C에서의 순전파는 다음과 같습니다:
 
 ```c
 #include <stdio.h>
@@ -131,31 +130,31 @@ void layernorm_forward(float* out, float* mean, float* rstd,
     float eps = 1e-5f;
     for (int b = 0; b < B; b++) {
         for (int t = 0; t < T; t++) {
-            // seek to the input position inp[b,t,:]
+            // 입력 위치 inp[b,t,:]로 이동
             float* x = inp + b * T * C + t * C;
-            // calculate the mean
+            // 평균 계산
             float m = 0.0f;
             for (int i = 0; i < C; i++) {
                 m += x[i];
             }
             m = m/C;
-            // calculate the variance (without any bias correction)
+            // 분산 계산 (바이어스 보정 없이)
             float v = 0.0f;
             for (int i = 0; i < C; i++) {
                 float xshift = x[i] - m;
                 v += xshift * xshift;
             }
             v = v/C;
-            // calculate the rstd
+            // rstd 계산
             float s = 1.0f / sqrtf(v + eps);
-            // seek to the output position in out[b,t,:]
+            // 출력 위치 out[b,t,:]로 이동
             float* out_bt = out + b * T * C + t * C;
             for (int i = 0; i < C; i++) {
-                float n = (s * (x[i] - m)); // normalized output
-                float o = n * weight[i] + bias[i]; // scale and shift it
-                out_bt[i] = o; // write
+                float n = (s * (x[i] - m)); // 정규화된 출력
+                float o = n * weight[i] + bias[i]; // 스케일링 및 이동
+                out_bt[i] = o; // 쓰기
             }
-            // cache the mean and rstd for the backward pass later
+            // 역전파를 위해 평균 및 rstd 캐시
             mean[b * T + t] = m;
             rstd[b * T + t] = s;
         }
@@ -163,7 +162,7 @@ void layernorm_forward(float* out, float* mean, float* rstd,
 }
 ```
 
-You'll see how I offset the pointer to the `inp[b,t]`, and then you know that the next `C` elements are the channels of that position in (batch, time). And the backward pass:
+포인터를 `inp[b,t]`로 오프셋하고, 다음 `C` 요소는 (배치, 시간) 위치의 채널임을 알 수 있습니다. 그리고 역전파:
 
 ```c
 void layernorm_backward(float* dinp, float* dweight, float* dbias,
@@ -177,7 +176,7 @@ void layernorm_backward(float* dinp, float* dweight, float* dbias,
             float mean_bt = mean[b * T + t];
             float rstd_bt = rstd[b * T + t];
 
-            // first: two reduce operations
+            // 첫 번째: 두 개의 reduce 연산
             float dnorm_mean = 0.0f;
             float dnorm_norm_mean = 0.0f;
             for (int i = 0; i < C; i++) {
@@ -189,20 +188,20 @@ void layernorm_backward(float* dinp, float* dweight, float* dbias,
             dnorm_mean = dnorm_mean / C;
             dnorm_norm_mean = dnorm_norm_mean / C;
 
-            // now iterate again and accumulate all the gradients
+            // 이제 다시 반복하여 모든 기울기 누적
             for (int i = 0; i < C; i++) {
                 float norm_bti = (inp_bt[i] - mean_bt) * rstd_bt;
                 float dnorm_i = weight[i] * dout_bt[i];
-                // gradient contribution to bias
+                // 바이어스에 대한 기울기 기여
                 dbias[i] += dout_bt[i];
-                // gradient contribution to weight
+                // 가중치에 대한 기울기 기여
                 dweight[i] += norm_bti * dout_bt[i];
-                // gradient contribution to input
+                // 입력에 대한 기울기 기여
                 float dval = 0.0f;
-                dval += dnorm_i; // term 1
-                dval -= dnorm_mean; // term 2
-                dval -= norm_bti * dnorm_norm_mean; // term 3
-                dval *= rstd_bt; // final scale
+                dval += dnorm_i; // 항 1
+                dval -= dnorm_mean; // 항 2
+                dval -= norm_bti * dnorm_norm_mean; // 항 3
+                dval *= rstd_bt; // 최종 스케일링
                 dinp_bt[i] += dval;
             }
         }
